@@ -272,6 +272,21 @@ class TestKGTools:
             valid_from="2025-01-01",
         )
         assert result["success"] is True
+        assert result["triple_id"].startswith("t_alice_likes_coffee_")
+
+    def test_kg_add_conflict(self, monkeypatch, config, palace_path, seeded_kg):
+        _patch_mcp_server(monkeypatch, config, palace_path, seeded_kg)
+        from mempalace.mcp_server import tool_kg_add
+
+        result = tool_kg_add(
+            subject="Alice",
+            predicate="works_at",
+            object="AnotherCo",
+            valid_from="2025-02-01",
+        )
+        assert result["success"] is False
+        assert result["reason"] == "conflict"
+        assert result["conflicts"][0]["object"] == "NewCo"
 
     def test_kg_query(self, monkeypatch, config, palace_path, seeded_kg):
         _patch_mcp_server(monkeypatch, config, palace_path, seeded_kg)

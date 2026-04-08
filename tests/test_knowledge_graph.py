@@ -5,6 +5,8 @@ Covers: entity CRUD, triple CRUD, temporal queries, invalidation,
 timeline, stats, and edge cases (duplicate triples, ID collisions).
 """
 
+from mempalace.knowledge_graph import KnowledgeConflictError
+
 
 class TestEntityOperations:
     def test_add_entity(self, kg):
@@ -39,11 +41,26 @@ class TestTripleOperations:
         tid2 = kg.add_triple("Alice", "knows", "Bob")
         assert tid1 == tid2
 
+    def test_conflicting_single_value_triple_raises(self, kg):
+        tid = kg.add_triple("Alice", "works_at", "Acme")
+        assert tid.startswith("t_alice_works_at_acme_")
+        try:
+            kg.add_triple("Alice", "works_at", "NewCo")
+            assert False, "Expected KnowledgeConflictError"
+        except KnowledgeConflictError as exc:
+            assert exc.conflicts[0]["object"] == "Acme"
+
     def test_invalidated_triple_allows_re_add(self, kg):
         tid1 = kg.add_triple("Alice", "works_at", "Acme")
         kg.invalidate("Alice", "works_at", "Acme", ended="2025-01-01")
         tid2 = kg.add_triple("Alice", "works_at", "Acme")
         assert tid1 != tid2  # new triple since old one was closed
+
+    def test_multi_value_predicate_does_not_conflict(self, kg):
+        tid1 = kg.add_triple("Alice", "knows", "Bob")
+        tid2 = kg.add_triple("Alice", "knows", "Carol")
+        assert tid1.startswith("t_alice_knows_bob_")
+        assert tid2.startswith("t_alice_knows_carol_")
 
 
 class TestQueries:

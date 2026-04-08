@@ -43,6 +43,23 @@ from datetime import date, datetime
 from pathlib import Path
 
 
+class KnowledgeConflictError(ValueError):
+    def __init__(self, conflicts):
+        super().__init__("Conflicting active fact exists")
+        self.conflicts = conflicts
+
+
+# Predicates modeled as having a single current value at a time.
+# Multi-valued relationships such as knows/likes/does are intentionally excluded.
+SINGLE_VALUED_PREDICATES = {
+    "works_at",
+    "assigned_to",
+    "married_to",
+    "is_partner_of",
+    "is_pet_of",
+}
+
+
 DEFAULT_KG_PATH = os.path.expanduser("~/.mempalace/knowledge_graph.sqlite3")
 
 
@@ -109,6 +126,34 @@ class KnowledgeGraph:
         conn.close()
         return eid
 
+    def _find_active_conflicts(self, conn, sub_id: str, pred: str, obj_id: str):
+        """Return conflicting active facts for single-valued predicates."""
+        if pred not in SINGLE_VALUED_PREDICATES:
+            return []
+
+        rows = conn.execute(
+            """
+            SELECT t.id, s.name as subject_name, t.predicate, o.name as object_name, t.valid_from, t.source_closet
+            FROM triples t
+            JOIN entities s ON t.subject = s.id
+            JOIN entities o ON t.object = o.id
+            WHERE t.subject = ? AND t.predicate = ? AND t.valid_to IS NULL AND t.object != ?
+            """,
+            (sub_id, pred, obj_id),
+        ).fetchall()
+
+        return [
+            {
+                "triple_id": row[0],
+                "subject": row[1],
+                "predicate": row[2],
+                "object": row[3],
+                "valid_from": row[4],
+                "source_closet": row[5],
+            }
+            for row in rows
+        ]
+
     def add_triple(
         self,
         subject: str,
@@ -123,10 +168,10 @@ class KnowledgeGraph:
         """
         Add a relationship triple: subject → predicate → object.
 
-        Examples:
-            add_triple("Max", "child_of", "Alice", valid_from="2015-04-01")
-            add_triple("Max", "does", "swimming", valid_from="2025-01-01")
-            add_triple("Alice", "worried_about", "Max injury", valid_from="2026-01", valid_to="2026-02")
+        Returns the triple id string.
+
+        If a conflicting active fact exists for a single-valued predicate,
+        raises KnowledgeConflictError with conflict details.
         """
         sub_id = self._entity_id(subject)
         obj_id = self._entity_id(obj)
@@ -145,7 +190,12 @@ class KnowledgeGraph:
 
         if existing:
             conn.close()
-            return existing[0]  # Already exists and still valid
+            return existing[0]
+
+        conflicts = self._find_active_conflicts(conn, sub_id, pred, obj_id)
+        if conflicts:
+            conn.close()
+            raise KnowledgeConflictError(conflicts)
 
         triple_id = f"t_{sub_id}_{pred}_{obj_id}_{hashlib.md5(f'{valid_from}{datetime.now().isoformat()}'.encode()).hexdigest()[:8]}"
 
@@ -340,7 +390,7 @@ class KnowledgeGraph:
 
     def seed_from_entity_facts(self, entity_facts: dict):
         """
-        Seed the knowledge graph from fact_checker.py ENTITY_FACTS.
+        Seed the knowledge graph from a provided entity facts mapping.
         This bootstraps the graph with known ground truth.
         """
         for key, facts in entity_facts.items():

@@ -29,7 +29,7 @@ from .searcher import search_memories
 from .palace_graph import traverse, find_tunnels, graph_stats
 import chromadb
 
-from .knowledge_graph import KnowledgeGraph
+from .knowledge_graph import KnowledgeGraph, KnowledgeConflictError
 
 _kg = KnowledgeGraph()
 
@@ -316,9 +316,18 @@ def tool_kg_add(
     subject: str, predicate: str, object: str, valid_from: str = None, source_closet: str = None
 ):
     """Add a relationship to the knowledge graph."""
-    triple_id = _kg.add_triple(
-        subject, predicate, object, valid_from=valid_from, source_closet=source_closet
-    )
+    try:
+        triple_id = _kg.add_triple(
+            subject, predicate, object, valid_from=valid_from, source_closet=source_closet
+        )
+    except KnowledgeConflictError as exc:
+        return {
+            "success": False,
+            "reason": "conflict",
+            "fact": f"{subject} → {predicate} → {object}",
+            "conflicts": exc.conflicts,
+            "hint": "Invalidate the old fact first if it is no longer true.",
+        }
     return {"success": True, "triple_id": triple_id, "fact": f"{subject} → {predicate} → {object}"}
 
 
